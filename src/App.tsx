@@ -1516,6 +1516,26 @@ const LongTermAICoach: FC<{ db: Firestore | null; userId: string | null; dailyAl
     const [drinks, setDrinks] = useState<Drink[]>([]);
     const [analysis, setAnalysis] = useState<Analysis | null>(null);
 
+    useEffect(() => {
+        const fetchAllDrinks = async () => {
+            if (!db || !userId) return;
+            const drinksCollectionPath = `artifacts/${appId}/users/${userId}/drinks`;
+            const querySnapshot = await getDocs(query(collection(db, drinksCollectionPath)));
+            const allDrinks: Drink[] = [];
+            querySnapshot.forEach((doc) => {
+                allDrinks.push({ id: doc.id, ...doc.data() } as Drink);
+            });
+            setDrinks(allDrinks);
+        };
+        fetchAllDrinks();
+    }, [db, userId]);
+
+    useEffect(() => {
+        if (drinks.length > 0) {
+            setAnalysis(analyzeConsumption(drinks, t));
+        }
+    }, [drinks, t]);
+
     const generateInsight = useCallback(async () => {
         if (!GEMINI_API_KEY) {
             return;
@@ -1592,6 +1612,12 @@ const LongTermAICoach: FC<{ db: Firestore | null; userId: string | null; dailyAl
             setIsLoading(false);
         }
     }, [db, userId, t, dailyAlcoholGoal, drinks, analysis]);
+
+    useEffect(() => {
+        if (analysis) {
+            generateInsight();
+        }
+    }, [analysis, generateInsight]);
 
     return (
         <div className="bg-gradient-to-br from-purple-500/20 to-indigo-500/20 rounded-2xl p-6 border border-purple-400/30 shadow-lg">
@@ -1800,12 +1826,10 @@ function AppContent() {
     const [showDynamicBrain, setShowDynamicBrain] = useState(false); // New state for dynamic brain visualizer
     const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; }>({ isOpen: false, message: '' });
 
-    const finalAppId = typeof __app_id !== 'undefined' ? __app_id : appId;
+    const finalAppId = appId;
 
     useEffect(() => {
-        const finalFirebaseConfig = typeof __firebase_config !== 'undefined'
-            ? JSON.parse(__firebase_config)
-            : firebaseConfig;
+        const finalFirebaseConfig = firebaseConfig;
 
         if (Object.keys(finalFirebaseConfig).length === 0 || !finalFirebaseConfig.apiKey) {
             setIsConfigMissing(true);
@@ -2586,4 +2610,3 @@ export default function App() {
         </LanguageProvider>
     );
 }
-
