@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useCallback, createContext, useContext, FC, ReactNode } from 'react';
 import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, Auth } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, Auth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, doc, deleteDoc, Firestore, getDocs, setDoc, getDoc } from 'firebase/firestore';
-import { Brain, BarChart3, Info, X, Plus, Droplet, Star, Lock, Trash2, TrendingUp, Globe, Sparkles, AlertTriangle, BellRing, Settings, Edit, Save, Award, Share2, CheckCircle, XCircle, History } from 'lucide-react'; // Added History icon
-import confetti from 'canvas-confetti';
+import { Brain, BarChart3, Info, X, Plus, Droplet, Star, Lock, Trash2, TrendingUp, Globe, Sparkles, AlertTriangle, BellRing, Settings, Edit, Save, Award, Share2, History, LogOut } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 // --- Type Definitions for TypeScript ---
@@ -829,7 +828,7 @@ const BrainVisual: FC<{ analysis: Analysis | null; drinkCount: number }> = ({ an
             occipitalLobe: '#008B8B', // Dark Cyan (approx Dark blue/teal from image)
             temporalLobe: '#32CD32',  // Lime Green (approx Green from image)
             cerebellum: '#FFA500',    // Orange (approx Orange/Yellow from image)
-            brainstem: '#FF4500'      // Orange Red (approx Red from image)
+            brainstem: '#FF4500'     // Orange Red (approx Red from image)
         };
 
         const baseColor = baseColors[key] || 'rgba(59, 130, 246, 0.2)'; // Fallback
@@ -1241,13 +1240,13 @@ const PremiumModal: FC<{ isOpen: boolean; onClose: () => void; onConfirm: () => 
     );
 };
 
-const PremiumFeature: FC<{ title: string; description: string; icon: ReactNode; onUpgrade: () => void; }> = ({ title, description, icon, onUpgrade }) => (
+const PremiumFeature: FC<{ title: string; description: string; icon: ReactNode; onUpgrade: () => void; isAuthReady: boolean; }> = ({ title, description, icon, onUpgrade, isAuthReady }) => (
     <div className="relative bg-gray-800 p-4 rounded-lg border border-gray-700 overflow-hidden">
         <div className="flex items-center mb-2">{icon}<h4 className="font-bold ml-2 text-gray-200">{title}</h4></div>
         <p className="text-xs text-gray-400">{description}</p>
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center">
             <Lock className="text-yellow-400 mb-2" size={24} />
-            <button onClick={onUpgrade} className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 text-xs font-bold py-1 px-3 rounded-full transition-colors">Upgrade to Unlock</button>
+            <button onClick={onUpgrade} disabled={!isAuthReady} className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 text-xs font-bold py-1 px-3 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Upgrade to Unlock</button>
         </div>
     </div>
 );
@@ -1518,6 +1517,8 @@ const LongTermAICoach: FC<{ db: Firestore | null; userId: string | null; dailyAl
     const [insight, setInsight] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [isKeyMissing, setIsKeyMissing] = useState(false);
+    const [drinks, setDrinks] = useState<Drink[]>([]);
+    const [analysis, setAnalysis] = useState<Analysis | null>(null);
 
     const generateInsight = useCallback(async () => {
         if (!GEMINI_API_KEY) {
@@ -1596,7 +1597,7 @@ const LongTermAICoach: FC<{ db: Firestore | null; userId: string | null; dailyAl
         } finally {
             setIsLoading(false);
         }
-    }, [db, userId, t, dailyAlcoholGoal]);
+    }, [db, userId, t, dailyAlcoholGoal, drinks, analysis]);
 
     return (
         <div className="bg-gradient-to-br from-purple-500/20 to-indigo-500/20 rounded-2xl p-6 border border-purple-400/30 shadow-lg">
@@ -1710,7 +1711,7 @@ const DailyGoal: FC<DailyGoalProps> = ({ userId, db, dailyAlcoholGoal, setDailyA
             {message && <p className="text-sm text-center text-green-400 mb-4">{message}</p>}
             <div className="mb-2">
                 <p className="text-gray-300 text-sm">{t('current_progress')}: {totalAlcoholToday.toFixed(1)}g / {dailyAlcoholGoal !== null ? `${dailyAlcoholGoal.toFixed(1)}g` : t('goal_not_set')}</p>
-                {dailyAlcoholGoal !== null && dailyAlcoholToday > 0 && ( // Ensure dailyAlcoholToday is positive before showing progress bar
+                {dailyAlcoholGoal !== null && totalAlcoholToday > 0 && ( // Ensure totalAlcoholToday is positive before showing progress bar
                     <div className="w-full bg-gray-700 rounded-full h-2.5 mt-2">
                         <div className={`${progressBarColor} h-2.5 rounded-full`} style={{ width: `${progress}%` }}></div>
                     </div>
@@ -1786,7 +1787,9 @@ function AppContent() {
     const [drinks, setDrinks] = useState<Drink[]>([]);
     const [analysis, setAnalysis] = useState<Analysis | null>(null);
     const [db, setDb] = useState<Firestore | null>(null);
-    const [userId, setUserId] = useState<string | null>(null);
+    const [auth, setAuth] = useState<Auth | null>(null);
+    const [user, setUser] = useState<User | null>(null);
+    const [isAuthReady, setIsAuthReady] = useState(false);
     const [isPremium, setIsPremium] = useState(false);
     const [isConfigMissing, setIsConfigMissing] = useState(false);
     const [showReminder, setShowReminder] = useState(false);
@@ -1801,41 +1804,53 @@ function AppContent() {
     const [isLoadingPremium, setIsLoadingPremium] = useState(false);
     const [showLateLogModal, setShowLateLogModal] = useState(false); // New state for late add modal
     const [showDynamicBrain, setShowDynamicBrain] = useState(false); // New state for dynamic brain visualizer
+    const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; }>({ isOpen: false, message: '' });
 
+    const finalAppId = typeof __app_id !== 'undefined' ? __app_id : appId;
 
     useEffect(() => {
-        if (Object.keys(firebaseConfig).length === 0 || !firebaseConfig.apiKey) {
+        const finalFirebaseConfig = typeof __firebase_config !== 'undefined'
+            ? JSON.parse(__firebase_config)
+            : firebaseConfig;
+
+        if (Object.keys(finalFirebaseConfig).length === 0 || !finalFirebaseConfig.apiKey) {
             setIsConfigMissing(true);
             return;
         }
+
         setIsConfigMissing(false);
+
         try {
-            const app: FirebaseApp = initializeApp(firebaseConfig);
+            const app: FirebaseApp = initializeApp(finalFirebaseConfig);
             const firestoreDb: Firestore = getFirestore(app);
             const firebaseAuth: Auth = getAuth(app);
             setDb(firestoreDb);
-            const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
-                if (user) {
-                    setUserId(user.uid);
-                } else {
-                    await signInAnonymously(firebaseAuth);
-                }
+            setAuth(firebaseAuth);
+
+            const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+                setUser(user);
+                setIsAuthReady(true);
             });
+
             return () => unsubscribe();
-        } catch (e) { console.error("Error initializing Firebase:", e); }
+        } catch (e) {
+            console.error("Error initializing Firebase:", e);
+            setIsConfigMissing(true);
+        }
     }, []);
 
     // Check for successful payment on component mount
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('success') === 'true') { // Changed from payment_success to success
+        if (urlParams.get('success') === 'true') {
             setIsPremium(true);
-            confetti({
-                particleCount: 150,
-                spread: 180,
-                origin: { y: 0.6 }
-            });
-            // Clean up the URL
+            if (typeof (window as any).confetti === 'function') {
+                (window as any).confetti({
+                    particleCount: 150,
+                    spread: 180,
+                    origin: { y: 0.6 }
+                });
+            }
             window.history.replaceState({}, document.title, window.location.pathname);
         }
     }, []);
@@ -1843,8 +1858,8 @@ function AppContent() {
 
     useEffect(() => {
         let unsubscribeDrinks: (() => void) | undefined;
-        if (db && userId) {
-            const drinksCollectionPath = `artifacts/${appId}/users/${userId}/drinks`;
+        if (db && user) {
+            const drinksCollectionPath = `artifacts/${finalAppId}/users/${user.uid}/drinks`;
             const q = query(collection(db, drinksCollectionPath));
             unsubscribeDrinks = onSnapshot(q, (querySnapshot) => {
                 const drinksData: Drink[] = [];
@@ -1853,7 +1868,6 @@ function AppContent() {
                 setDrinks(drinksData);
                 setLastLogTime(Date.now());
                 setShowReminder(false);
-                // If there are drinks, enable the dynamic brain visual
                 if (drinksData.length > 0) {
                     setShowDynamicBrain(true);
                 } else {
@@ -1866,12 +1880,12 @@ function AppContent() {
                 unsubscribeDrinks();
             }
         };
-    }, [db, userId]);
+    }, [db, user, finalAppId]);
 
     const fetchCustomQuickAdds = useCallback(() => {
         let unsubscribeCustomQuickAdds: (() => void) | undefined;
-        if (db && userId) {
-            const q = query(collection(db, `artifacts/${appId}/users/${userId}/customQuickAdds`));
+        if (db && user) {
+            const q = query(collection(db, `artifacts/${finalAppId}/users/${user.uid}/customQuickAdds`));
             unsubscribeCustomQuickAdds = onSnapshot(q, (snapshot) => {
                 const fetchedQuickAdds: CustomQuickAdd[] = [];
                 snapshot.forEach(doc => {
@@ -1885,7 +1899,7 @@ function AppContent() {
                 unsubscribeCustomQuickAdds();
             }
         };
-    }, [db, userId]);
+    }, [db, user, finalAppId]);
 
     useEffect(() => {
         const unsubscribe = fetchCustomQuickAdds();
@@ -1894,8 +1908,8 @@ function AppContent() {
 
     useEffect(() => {
         let unsubscribeDailyGoal: (() => void) | undefined;
-        if (!db || !userId) return;
-        const docRef = doc(db, `artifacts/${appId}/users/${userId}/goals/dailyAlcohol`);
+        if (!db || !user) return;
+        const docRef = doc(db, `artifacts/${finalAppId}/users/${user.uid}/goals/dailyAlcohol`);
         unsubscribeDailyGoal = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
                 setDailyAlcoholGoal(docSnap.data().goal);
@@ -1910,12 +1924,12 @@ function AppContent() {
                 unsubscribeDailyGoal();
             }
         };
-    }, [db, userId]);
+    }, [db, user, finalAppId]);
 
     useEffect(() => {
         let unsubscribeAchievements: (() => void) | undefined;
-        if (db && userId) {
-            const q = query(collection(db, `artifacts/${appId}/users/${userId}/achievements`));
+        if (db && user) {
+            const q = query(collection(db, `artifacts/${finalAppId}/users/${user.uid}/achievements`));
             unsubscribeAchievements = onSnapshot(q, (snapshot) => {
                 const fetchedAchievements: Achievement[] = [];
                 snapshot.forEach(doc => {
@@ -1929,13 +1943,13 @@ function AppContent() {
                 unsubscribeAchievements();
             }
         };
-    }, [db, userId]);
+    }, [db, user, finalAppId]);
 
     useEffect(() => {
         let unsubscribeChallenge: (() => void) | undefined;
         const today = new Date().toISOString().split('T')[0];
-        if (db && userId) {
-            const challengeDocRef = doc(db, `artifacts/${appId}/users/${userId}/dailyChallenge/${today}`);
+        if (db && user) {
+            const challengeDocRef = doc(db, `artifacts/${finalAppId}/users/${user.uid}/dailyChallenge/${today}`);
             unsubscribeChallenge = onSnapshot(challengeDocRef, async (docSnap) => {
                 if (docSnap.exists()) {
                     setDailyChallenge(docSnap.data() as DailyChallenge);
@@ -1957,104 +1971,28 @@ function AppContent() {
                 unsubscribeChallenge();
             }
         };
-    }, [db, userId]);
+    }, [db, user, finalAppId]);
 
     useEffect(() => { setAnalysis(analyzeConsumption(drinks, t)); }, [drinks, t]);
 
-    const handleLogDrink = async (drinkData: Omit<Drink, 'id'>) => {
-        if (db && userId) {
-            try {
-                const drinksCollectionPath = `artifacts/${appId}/users/${userId}/drinks`;
-                await addDoc(collection(db, drinksCollectionPath), drinkData);
-                setLastLogTime(Date.now());
-                setShowReminder(false);
-                checkAchievements(drinks.length + 1, drinkData);
-                checkDailyChallengeCompletion(drinks.length + 1, drinkData);
-                setShowDynamicBrain(true); // Show dynamic brain when a drink is logged
-            } catch (error) { console.error("Error adding drink to Firestore: ", error); }
-        }
-    };
-    
-    const handleDeleteDrink = async (drinkId: string) => {
-        if (db && userId) {
-            try {
-                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/drinks/${drinkId}`));
-            } catch (error) { console.error("Error deleting drink:", error); }
-        }
-    };
-    
-    const handleGoPremium = async () => {
-        if (!userId) {
-            console.error("User ID is not available for premium purchase.");
-            alert("Please ensure you are logged in to purchase premium.");
-            return;
-        }
-
-        setIsLoadingPremium(true);
-        try {
-            const checkoutApiUrl = 'https://stripe-backend-api-xi-seven.vercel.app/api/create-checkout-session'; 
-            const priceId = 'price_1RoPOPPEmeNnPDdSQgC5IDW7'; 
-            const redirectUrl = window.location.origin; 
-
-            console.log("Sending request to Vercel backend...");
-            console.log("checkoutApiUrl:", checkoutApiUrl);
-            console.log("priceId:", priceId);
-            console.log("userId:", userId);
-            console.log("redirectUrl:", redirectUrl);
-
-            const response = await fetch(checkoutApiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    priceId: priceId,
-                    userId: userId,
-                    redirectUrl: redirectUrl,
-                }),
-            });
-
-            const data = await response.json();
-            console.log("Received response from Vercel backend:", data);
-            console.log("Stripe Checkout URL:", data.url);
-
-
-            if (response.ok && data.url) {
-                window.location.assign(data.url); 
-            } else {
-                console.error('Error initiating checkout:', data.message || 'Unknown error', data.details);
-                alert(`Failed to start payment: ${data.message || 'Unknown error'}. Please try again.`);
-                setIsLoadingPremium(false);
-            }
-        } catch (error) {
-            console.error('Network or unexpected error during checkout initiation:', error);
-            alert('A network error occurred. Please try again.');
-            setIsLoadingPremium(false);
-        } finally {
-            setIsPremiumModalOpen(false); 
-        }
-    };
-
-
-    const totalAlcohol = drinks.reduce((sum, drink) => sum + drink.alcoholGrams, 0).toFixed(1);
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const totalAlcoholToday = drinks.filter(drink => new Date(drink.timestamp).getTime() >= startOfToday.getTime())
+    const totalAlcoholToday = drinks.filter(drink => new Date(drink.timestamp).getTime() >= new Date().setHours(0, 0, 0, 0))
         .reduce((sum, drink) => sum + drink.alcoholGrams, 0);
 
-    const checkAchievements = useCallback(async (currentDrinkCount: number, lastLoggedDrink: Drink) => {
-        if (!db || !userId) return;
+    const checkAchievements = useCallback(async (currentDrinkCount: number) => {
+        if (!db || !user) return;
         const earnedAchievementIds = new Set(achievements.map(a => a.id));
         const addAchievement = async (id: string, nameKey: string, descriptionKey: string) => {
             if (!earnedAchievementIds.has(id)) {
-                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/achievements`), {
+                await addDoc(collection(db, `artifacts/${finalAppId}/users/${user.uid}/achievements`), {
                     id, nameKey, descriptionKey, earnedDate: new Date().toISOString(),
                 });
-                confetti({
-                    particleCount: 100,
-                    spread: 70,
-                    origin: { y: 0.6 }
-                });
+                if (typeof (window as any).confetti === 'function') {
+                    (window as any).confetti({
+                        particleCount: 100,
+                        spread: 70,
+                        origin: { y: 0.6 }
+                    });
+                }
             }
         };
         if (currentDrinkCount === 1) {
@@ -2067,7 +2005,7 @@ function AppContent() {
         if (currentDrinkCount >= 30) addAchievement("30_day_streak", "achievement_30_day_streak_name", "achievement_30_day_streak_desc");
 
         if (dailyAlcoholGoal !== null && totalAlcoholToday >= dailyAlcoholGoal) {
-            const goalHitsRef = doc(db, `artifacts/${appId}/users/${userId}/stats/dailyGoalHits`);
+            const goalHitsRef = doc(db, `artifacts/${finalAppId}/users/${user.uid}/stats/dailyGoalHits`);
             const docSnap = await getDoc(goalHitsRef);
             let currentGoalHits = docSnap.exists() ? docSnap.data().count || 0 : 0;
             const lastGoalHitDate = docSnap.exists() ? docSnap.data().lastHitDate : null;
@@ -2083,22 +2021,26 @@ function AppContent() {
         if (currentDrinkCount >= 10) addAchievement("10_drinks", "achievement_10_drinks_name", "achievement_10_drinks_desc");
         if (currentDrinkCount >= 50) addAchievement("50_drinks", "achievement_50_drinks_name", "achievement_50_drinks_desc");
         if (currentDrinkCount >= 100) addAchievement("100_drinks", "achievement_100_drinks_name", "achievement_100_drinks_desc");
-    }, [db, userId, achievements, drinks.length, totalAlcoholToday, dailyAlcoholGoal]);
+    }, [db, user, achievements, totalAlcoholToday, dailyAlcoholGoal, finalAppId]);
 
-    const checkDailyChallengeCompletion = useCallback(async (currentDrinkCount: number, lastLoggedDrink: Drink) => {
-        if (!db || !userId || !dailyChallenge || dailyChallenge.completed) return;
+    const checkDailyChallengeCompletion = useCallback(async (lastLoggedDrink: Drink) => {
+        if (!db || !user || !dailyChallenge || dailyChallenge.completed) return;
         const today = new Date().toISOString().split('T')[0];
-        const challengeDocRef = doc(db, `artifacts/${appId}/users/${userId}/dailyChallenge/${today}`);
+        const challengeDocRef = doc(db, `artifacts/${finalAppId}/users/${user.uid}/dailyChallenge/${today}`);
         let challengeCompleted = false;
+        
+        const isToday = new Date(lastLoggedDrink.timestamp).toISOString().split('T')[0] === today;
+        const drinksTodayCount = drinks.filter(d => new Date(d.timestamp).toISOString().split('T')[0] === today).length + (isToday ? 1 : 0);
+        const alcoholTodayWithNewDrink = totalAlcoholToday + (isToday ? lastLoggedDrink.alcoholGrams : 0);
+
         switch (dailyChallenge.type) {
             case 'log_n_drinks':
-                const todayDrinks = drinks.filter(d => new Date(d.timestamp).toISOString().split('T')[0] === today).length;
-                if (todayDrinks >= (dailyChallenge.value || 0)) {
+                if (drinksTodayCount >= (dailyChallenge.value || 0)) {
                     challengeCompleted = true;
                 }
                 break;
             case 'stay_below_goal':
-                if (dailyAlcoholGoal !== null && totalAlcoholToday <= (dailyChallenge.value || dailyAlcoholGoal)) {
+                if (dailyAlcoholGoal !== null && alcoholTodayWithNewDrink <= (dailyChallenge.value || dailyAlcoholGoal)) {
                     challengeCompleted = true;
                 }
                 break;
@@ -2112,17 +2054,91 @@ function AppContent() {
         if (challengeCompleted) {
             await setDoc(challengeDocRef, { ...dailyChallenge, completed: true }, { merge: true });
             setDailyChallenge(prev => prev ? { ...prev, completed: true } : null);
-            confetti({
-                particleCount: 150,
-                spread: 90,
-                origin: { y: 0.8 }
-            });
+            if (typeof (window as any).confetti === 'function') {
+                (window as any).confetti({
+                    particleCount: 150,
+                    spread: 90,
+                    origin: { y: 0.8 }
+                });
+            }
         }
-    }, [db, userId, dailyChallenge, drinks, dailyAlcoholGoal, totalAlcoholToday, customQuickAdds]);
+    }, [db, user, dailyChallenge, drinks, dailyAlcoholGoal, totalAlcoholToday, customQuickAdds, finalAppId]);
+    
+    useEffect(() => {
+        if (drinks.length > 0) {
+            checkAchievements(drinks.length);
+        }
+    }, [drinks, checkAchievements]);
+
+    const handleLogDrink = async (drinkData: Omit<Drink, 'id'>) => {
+        if (db && user) {
+            try {
+                const drinksCollectionPath = `artifacts/${finalAppId}/users/${user.uid}/drinks`;
+                await addDoc(collection(db, drinksCollectionPath), drinkData);
+                setLastLogTime(Date.now());
+                setShowReminder(false);
+                checkDailyChallengeCompletion(drinkData);
+                if (navigator.vibrate) {
+                    navigator.vibrate(50);
+                }
+            } catch (error) { console.error("Error adding drink to Firestore: ", error); }
+        }
+    };
+    
+    const handleDeleteDrink = async (drinkId: string) => {
+        if (db && user) {
+            try {
+                await deleteDoc(doc(db, `artifacts/${finalAppId}/users/${user.uid}/drinks/${drinkId}`));
+            } catch (error) { console.error("Error deleting drink:", error); }
+        }
+    };
+    
+    const handleGoPremium = async () => {
+        if (!user) {
+            setAlertModal({ isOpen: true, message: "Please ensure you are logged in to purchase premium." });
+            return;
+        }
+
+        setIsLoadingPremium(true);
+        try {
+            const checkoutApiUrl = 'https://stripe-backend-api-xi-seven.vercel.app/api/create-checkout-session'; 
+            const priceId = 'price_1RoPOPPEmeNnPDdSQgC5IDW7'; 
+            const redirectUrl = window.location.origin; 
+
+            const response = await fetch(checkoutApiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    priceId: priceId,
+                    userId: user.uid,
+                    redirectUrl: redirectUrl,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.url) {
+                window.location.assign(data.url); 
+            } else {
+                setAlertModal({ isOpen: true, message: `Failed to start payment: ${data.message || 'Unknown error'}. Please try again.` });
+                setIsLoadingPremium(false);
+            }
+        } catch (error) {
+            setAlertModal({ isOpen: true, message: 'A network error occurred. Please try again.' });
+            setIsLoadingPremium(false);
+        } finally {
+            setIsPremiumModalOpen(false); 
+        }
+    };
+
+
+    const totalAlcohol = drinks.reduce((sum, drink) => sum + drink.alcoholGrams, 0).toFixed(1);
 
     useEffect(() => {
         const REMINDER_INTERVAL_MINUTES = 15;
-        let reminderTimer: NodeJS.Timeout;
+        let reminderTimer: ReturnType<typeof setInterval>;
         const checkAndShowReminder = () => {
             const timeElapsed = (Date.now() - lastLogTime) / (1000 * 60);
             if (timeElapsed >= REMINDER_INTERVAL_MINUTES && !isModalOpen && !isAchievementsModalOpen && !isManageQuickAddsModalOpen && !isPremiumModalOpen) {
@@ -2139,7 +2155,7 @@ function AppContent() {
         setIsModalOpen(true);
     };
 
-    const handleShareProgress = async () => {
+    const handleShareProgress = useCallback(async () => {
         let shareMessage = "";
         if (dailyAlcoholGoal !== null && dailyAlcoholGoal > 0) {
             if (totalAlcoholToday > dailyAlcoholGoal) {
@@ -2160,7 +2176,7 @@ function AppContent() {
                 console.log('Successfully shared');
             } catch (error) {
                 console.error('Error sharing:', error);
-                alert('Could not share. You can copy the text: ' + shareMessage);
+                setAlertModal({ isOpen: true, message: 'Could not share. You can copy the text: ' + shareMessage });
             }
         } else {
             const tempTextArea = document.createElement('textarea');
@@ -2169,9 +2185,21 @@ function AppContent() {
             tempTextArea.select();
             document.execCommand('copy');
             document.body.removeChild(tempTextArea);
-            alert('Web Share API not supported. Text copied to clipboard: ' + shareMessage);
+            setAlertModal({ isOpen: true, message: 'Web Share API not supported. Text copied to clipboard: ' + shareMessage });
         }
-    };
+    }, [dailyAlcoholGoal, totalAlcoholToday, t]);
+
+    if (!isAuthReady) {
+        return (
+            <div className="bg-gray-900 text-white min-h-screen flex items-center justify-center">
+                <div className="w-16 h-16 border-4 border-dashed rounded-full animate-spin border-blue-400"></div>
+            </div>
+        );
+    }
+
+    if (!user) {
+        return <AuthScreen auth={auth} />;
+    }
 
     if (isConfigMissing) {
         return (
@@ -2258,18 +2286,23 @@ function AppContent() {
                         0% { opacity: 1; transform: translate(-50%, -50%) scale(0); box-shadow: 0 0 0 0 rgba(147, 197, 253, 0.7); }
                         100% { opacity: 0; transform: translate(-50%, -50%) scale(12); box-shadow: 0 0 30px 40px rgba(147, 197, 253, 0); }
                     }
-                     @keyframes bounce-subtle {
+                       @keyframes bounce-subtle {
                         0%, 100% { transform: translateY(0) translateX(-50%); }
                         50% { transform: translateY(-5px) translateX(-50%); }
                     }
                 `}
             </style>
+            <AlertModal
+                isOpen={alertModal.isOpen}
+                message={alertModal.message}
+                onClose={() => setAlertModal({ isOpen: false, message: '' })}
+            />
             <DrinkModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onLogDrink={handleLogDrink} currentRegion={userRegion} />
             <DrinkModal isOpen={showLateLogModal} onClose={() => setShowLateLogModal(false)} onLogDrink={handleLogDrink} currentRegion={userRegion} showDateTimePicker={true} />
             <ManageQuickAddsModal
                 isOpen={isManageQuickAddsModalOpen}
                 onClose={() => setIsManageQuickAddsModalOpen(false)}
-                userId={userId}
+                userId={user.uid}
                 db={db}
                 onQuickAddUpdated={fetchCustomQuickAdds}
             />
@@ -2290,6 +2323,10 @@ function AppContent() {
                     <RegionSwitcher currentRegion={userRegion} setRegion={setUserRegion} />
                     <LanguageSwitcher />
                     <button onClick={() => setIsPremiumModalOpen(true)} className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold py-2 px-4 rounded-lg transition-transform hover:scale-105 shadow-lg shadow-yellow-500/20">{t('header_premium_button')}</button>
+                    <div className="text-sm text-gray-400">{user.email}</div>
+                    <button onClick={() => auth && signOut(auth)} className="text-gray-400 hover:text-white">
+                        <LogOut size={20} />
+                    </button>
                 </div>
             </header>
             <main className="p-4 md:p-8">
@@ -2304,11 +2341,11 @@ function AppContent() {
                                     <div className="relative w-full mx-auto aspect-square flex items-center justify-center overflow-hidden">
                                         <svg viewBox="0 0 300 300" className="w-full h-full absolute inset-0">
                                             <defs>
-                                                <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+                                                <pattern id="grid-static" width="30" height="30" patternUnits="userSpaceOnUse">
                                                     <path d="M 30 0 L 0 0 0 30" fill="none" stroke="rgba(107, 114, 128, 0.1)" strokeWidth="1"/>
                                                 </pattern>
                                             </defs>
-                                            <rect width="300" height="300" fill="url(#grid)" />
+                                            <rect width="300" height="300" fill="url(#grid-static)" />
                                         </svg>
                                         {/* Static brain placeholder - using a large lucide-react Brain icon */}
                                         <Brain size={150} className="text-blue-500/50 relative z-10" />
@@ -2330,7 +2367,7 @@ function AppContent() {
                         <AICoach drinks={drinks} analysis={analysis} dailyAlcoholGoal={dailyAlcoholGoal} />
                     </div>
                     {isPremium ? (
-                        <PremiumDashboard db={db} userId={userId} dailyAlcoholGoal={dailyAlcoholGoal} />
+                        <PremiumDashboard db={db} userId={user.uid} dailyAlcoholGoal={dailyAlcoholGoal} />
                     ) : (
                         <div className="lg:col-span-2 space-y-8">
                             <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700/50">
@@ -2386,7 +2423,7 @@ function AppContent() {
                                     </div>
                                 </div>
                             </div>
-                            <DailyGoal userId={userId} db={db} dailyAlcoholGoal={dailyAlcoholGoal} setDailyAlcoholGoal={setDailyAlcoholGoal} totalAlcoholToday={totalAlcoholToday} />
+                            <DailyGoal userId={user.uid} db={db} dailyAlcoholGoal={dailyAlcoholGoal} setDailyAlcoholGoal={setDailyAlcoholGoal} totalAlcoholToday={totalAlcoholToday} />
                             <div className="bg-gray-800/50 rounded-2xl p-6 border border-gray-700/50">
                                 <h3 className="text-xl font-bold mb-4">{t('section_title_log')}</h3>
                                 <div className="space-y-3 max-h-60 overflow-y-auto pr-2">
@@ -2419,8 +2456,8 @@ function AppContent() {
                                     </button>
                                 </div>
                                 <div className="space-y-4">
-                                    <PremiumFeature title={t('premium_feature_trends_title') as string} description={t('premium_feature_trends_desc') as string} icon={<BarChart3 className="text-gray-400" />} onUpgrade={() => setIsPremiumModalOpen(true)} />
-                                    <PremiumFeature title={t('premium_feature_insights_title') as string} description={t('premium_feature_insights_desc') as string} icon={<TrendingUp className="text-gray-400" />} onUpgrade={() => setIsPremiumModalOpen(true)} />
+                                    <PremiumFeature title={t('premium_feature_trends_title') as string} description={t('premium_feature_trends_desc') as string} icon={<BarChart3 className="text-gray-400" />} onUpgrade={() => setIsPremiumModalOpen(true)} isAuthReady={isAuthReady} />
+                                    <PremiumFeature title={t('premium_feature_insights_title') as string} description={t('premium_feature_insights_desc') as string} icon={<TrendingUp className="text-gray-400" />} onUpgrade={() => setIsPremiumModalOpen(true)} isAuthReady={isAuthReady} />
                                 </div>
                             </div>
                         </div>
@@ -2448,7 +2485,107 @@ function AppContent() {
     );
 }
 
+const AuthScreen: FC<{ auth: Auth | null; }> = ({ auth }) => {
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isLogin, setIsLogin] = useState(true);
+    const [error, setError] = useState('');
+
+    const handleAuthAction = async () => {
+        if (!auth) return;
+        setError('');
+        try {
+            if (isLogin) {
+                await signInWithEmailAndPassword(auth, email, password);
+            } else {
+                await createUserWithEmailAndPassword(auth, email, password);
+            }
+        } catch (err: any) {
+            setError(err.message);
+        }
+    };
+
+    return (
+        <div className="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
+            <div className="w-full max-w-sm mx-auto">
+                <div className="flex items-center justify-center gap-3 mb-8">
+                    <Brain className="text-blue-400" size={48} />
+                    <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-purple-500 text-transparent bg-clip-text">LumenDose</h1>
+                </div>
+                <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
+                    <h2 className="text-2xl font-bold text-center mb-6">{isLogin ? 'Log In' : 'Sign Up'}</h2>
+                    {error && <p className="bg-red-500/20 text-red-400 text-sm p-3 rounded-lg mb-4">{error}</p>}
+                    <div className="space-y-4">
+                        <input
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="Email"
+                            className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        />
+                        <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="Password"
+                            className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        />
+                        <button
+                            onClick={handleAuthAction}
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors duration-300"
+                        >
+                            {isLogin ? 'Log In' : 'Sign Up'}
+                        </button>
+                    </div>
+                    <p className="text-center text-sm text-gray-400 mt-6">
+                        {isLogin ? "Don't have an account?" : "Already have an account?"}
+                        <button onClick={() => setIsLogin(!isLogin)} className="font-semibold text-blue-400 hover:text-blue-300 ml-1">
+                            {isLogin ? 'Sign Up' : 'Log In'}
+                        </button>
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const AlertModal: FC<{ isOpen: boolean; message: string; onClose: () => void; }> = ({ isOpen, message, onClose }) => {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-gray-700 text-center">
+                <div className="flex justify-center mb-4">
+                    <AlertTriangle className="text-yellow-400" size={40} />
+                </div>
+                <p className="text-gray-300 mb-6">{message}</p>
+                <button onClick={onClose} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                    OK
+                </button>
+            </div>
+        </div>
+    );
+};
+
 export default function App() {
+    useEffect(() => {
+        const scriptId = 'canvas-confetti-script';
+        if (document.getElementById(scriptId)) {
+            return;
+        }
+        const script = document.createElement('script');
+        script.id = scriptId;
+        script.src = "https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js";
+        script.async = true;
+        document.head.appendChild(script);
+
+        return () => {
+            const existingScript = document.getElementById(scriptId);
+            if (existingScript) {
+                document.head.removeChild(existingScript);
+            }
+        };
+    }, []);
+
     return (
         <LanguageProvider>
             <AppContent />
