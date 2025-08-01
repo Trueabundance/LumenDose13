@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, createContext, useContext, FC,
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, Auth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, doc, deleteDoc, Firestore, getDocs, setDoc, getDoc } from 'firebase/firestore';
+// Ensured all necessary icons are imported here, and unused ones are removed.
 import { Brain, BarChart3, Info, X, Plus, Droplet, Star, Lock, Trash2, TrendingUp, Globe, Sparkles, AlertTriangle, BellRing, Settings, Edit, Save, Award, Share2, History, LogOut } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -784,10 +785,6 @@ const brainRegionsData: { [key: string]: { name: string; functions: string; sens
     },
 };
 
-// Vein paths are complex for this image, simplifying to minimal or none for clarity with regions
-const veinPaths: string[] = [];
-
-
 const analyzeConsumption = (drinks: Drink[], t: (key: string, ...args: any[]) => string): Analysis => {
     const totalAlcoholGrams = drinks.reduce((acc, drink) => acc + drink.alcoholGrams, 0);
     let analysis: Analysis = {};
@@ -819,7 +816,6 @@ const analyzeConsumption = (drinks: Drink[], t: (key: string, ...args: any[]) =>
 // --- React Components ---
 
 const BrainVisual: FC<{ analysis: Analysis | null; drinkCount: number }> = ({ analysis, drinkCount }) => {
-    const { t } = useTranslation();
     const getFillColor = (key: string, impact: number) => {
         // Base colors from the provided image (Picture1_0.webp)
         const baseColors: { [key: string]: string } = {
