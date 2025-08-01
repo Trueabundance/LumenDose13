@@ -816,6 +816,7 @@ const analyzeConsumption = (drinks: Drink[], t: (key: string, ...args: any[]) =>
 // --- React Components ---
 
 const BrainVisual: FC<{ analysis: Analysis | null; drinkCount: number }> = ({ analysis, drinkCount }) => {
+    const { t } = useTranslation();
     const getFillColor = (key: string, impact: number) => {
         // Base colors from the provided image (Picture1_0.webp)
         const baseColors: { [key: string]: string } = {
