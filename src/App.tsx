@@ -1513,18 +1513,15 @@ const LongTermAICoach: FC<{ db: Firestore | null; userId: string | null; dailyAl
     const { t } = useTranslation();
     const [insight, setInsight] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [isKeyMissing, setIsKeyMissing] = useState(false);
     const [drinks, setDrinks] = useState<Drink[]>([]);
     const [analysis, setAnalysis] = useState<Analysis | null>(null);
 
     const generateInsight = useCallback(async () => {
         if (!GEMINI_API_KEY) {
-            setIsKeyMissing(true);
             return;
         }
         if (!drinks || drinks.length < 2 || !analysis) return;
         
-        setIsKeyMissing(false);
         setIsLoading(true);
         setInsight('');
 
